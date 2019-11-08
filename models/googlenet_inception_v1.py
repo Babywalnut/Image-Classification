@@ -2,20 +2,34 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
+from .utils import BasicCNN
 
 
-class BasicCNN(nn.Module):
-    def __init__(self, in_channels, output_channels, kernel_size, stride, padding=0):
+class InceptionV1(nn.Module):
+    def __init__(self, in_channels, _1x1, _3x3_reduce, _3x3, _5x5_reduce, _5x5, _pool_proj):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels=in_channels, out_channels=output_channels,
-                      kernel_size=kernel_size, stride=stride, padding=padding),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(num_features=output_channels)
+        self.branch1 = nn.Conv2d(
+            in_channels=in_channels, out_channels=_1x1, kernel_size=(1, 1), stride=1
+        )
+        self.branch2 = nn.Sequential(
+            BasicCNN(in_channels=in_channels, output_channels=_3x3_reduce, kernel_size=(1, 1), stride=1),
+            BasicCNN(in_channels=_3x3_reduce, output_channels=_3x3, kernel_size=(3, 3), stride=1, padding=1)
+        )
+        self.branch3 = nn.Sequential(
+            BasicCNN(in_channels=in_channels, output_channels=_5x5_reduce, kernel_size=(1, 1), stride=1),
+            BasicCNN(in_channels=_5x5_reduce, output_channels=_5x5, kernel_size=(5, 5), stride=1, padding=2)
+        )
+        self.branch4 = nn.Sequential(
+            nn.MaxPool2d(kernel_size=(3, 3), stride=1, padding=1),
+            BasicCNN(in_channels=in_channels, output_channels=_pool_proj, kernel_size=(1, 1), stride=1)
         )
 
     def forward(self, inputs):
-        x = self.conv(inputs)
+        x1 = self.branch1(inputs)
+        x2 = self.branch2(inputs)
+        x3 = self.branch3(inputs)
+        x4 = self.branch4(inputs)
+        x = torch.cat([x1, x2, x3, x4], dim=1)
         return x
 
 
@@ -25,14 +39,12 @@ class GoogleNetInceptionV1(nn.Module):
         self.stem = nn.Sequential(
             BasicCNN(in_channels=3, output_channels=64, kernel_size=(7, 7), stride=2, padding=3),
             nn.MaxPool2d(kernel_size=3, stride=2),
-            BasicCNN(in_channels=64, output_channels=64, kernel_size=(1, 1), stride=1, padding=0),
-            BasicCNN(in_channels=64, output_channels=192, kernel_size=(3, 3), stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=3, stride=2)
         )
+
         self.max_pool = nn.MaxPool2d(kernel_size=(3, 3), stride=2, padding=1)
 
         # Inception 3
-        self.inception_a3 = InceptionV1(in_channels=192, _1x1=64, _3x3_reduce=96, _3x3=128, _5x5_reduce=16, _5x5=32,
+        self.inception_a3 = InceptionV1(in_channels=64, _1x1=64, _3x3_reduce=96, _3x3=128, _5x5_reduce=16, _5x5=32,
                                         _pool_proj=32)
         self.inception_b3 = InceptionV1(in_channels=256, _1x1=128, _3x3_reduce=128, _3x3=192, _5x5_reduce=32, _5x5=96,
                                         _pool_proj=64)
@@ -81,37 +93,10 @@ class GoogleNetInceptionV1(nn.Module):
         # Inception 5 Layer
         x = self.inception_a5(x)
         x = self.inception_b5(x)
+
         x = f.avg_pool2d(x, kernel_size=int(x.shape[-1]), stride=1)
 
         # fully connection
         x = x.view(x.shape[0], -1)
         x = self.fc(x)
-        return x
-
-
-class InceptionV1(nn.Module):
-    def __init__(self, in_channels, _1x1, _3x3_reduce, _3x3, _5x5_reduce, _5x5, _pool_proj):
-        super().__init__()
-        self.branch1 = nn.Conv2d(
-            in_channels=in_channels, out_channels=_1x1, kernel_size=(1, 1), stride=1
-        )
-        self.branch2 = nn.Sequential(
-            BasicCNN(in_channels=in_channels, output_channels=_3x3_reduce, kernel_size=(1, 1), stride=1),
-            BasicCNN(in_channels=_3x3_reduce, output_channels=_3x3, kernel_size=(3, 3), stride=1, padding=1)
-        )
-        self.branch3 = nn.Sequential(
-            BasicCNN(in_channels=in_channels, output_channels=_5x5_reduce, kernel_size=(1, 1), stride=1),
-            BasicCNN(in_channels=_5x5_reduce, output_channels=_5x5, kernel_size=(5, 5), stride=1, padding=2)
-        )
-        self.branch4 = nn.Sequential(
-            nn.MaxPool2d(kernel_size=(3, 3), stride=1, padding=1),
-            BasicCNN(in_channels=in_channels, output_channels=_pool_proj, kernel_size=(1, 1), stride=1)
-        )
-
-    def forward(self, inputs):
-        x1 = self.branch1(inputs)
-        x2 = self.branch2(inputs)
-        x3 = self.branch3(inputs)
-        x4 = self.branch4(inputs)
-        x = torch.cat([x1, x2, x3, x4], dim=1)
         return x
